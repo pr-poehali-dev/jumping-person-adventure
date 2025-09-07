@@ -6,14 +6,46 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Icon from '@/components/ui/icon';
 import { Switch } from '@/components/ui/switch';
 
+interface Obstacle {
+  id: number;
+  x: number;
+  type: 'rock' | 'spike' | 'bird';
+  height: number;
+}
+
 const RunnerGame = () => {
-  const [gameState, setGameState] = useState<'menu' | 'playing' | 'paused'>('menu');
+  const [gameState, setGameState] = useState<'menu' | 'playing' | 'paused' | 'gameOver'>('menu');
   const [score, setScore] = useState(0);
   const [highScore, setHighScore] = useState(parseInt(localStorage.getItem('runnerHighScore') || '0'));
   const [playerY, setPlayerY] = useState(50);
   const [isJumping, setIsJumping] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [speed, setSpeed] = useState(1);
+  const [obstacles, setObstacles] = useState<Obstacle[]>([]);
+  const [obstacleIdCounter, setObstacleIdCounter] = useState(0);
+
+  // Проверка коллизий
+  const checkCollision = useCallback(() => {
+    const playerLeft = 80;
+    const playerRight = 120;
+    const playerBottom = playerY;
+    const playerTop = playerY + 60;
+
+    for (const obstacle of obstacles) {
+      const obstacleLeft = obstacle.x;
+      const obstacleRight = obstacle.x + 40;
+      const obstacleBottom = obstacle.type === 'bird' ? 80 : 0;
+      const obstacleTop = obstacleBottom + obstacle.height;
+
+      if (playerRight > obstacleLeft && 
+          playerLeft < obstacleRight && 
+          playerTop > obstacleBottom && 
+          playerBottom < obstacleTop) {
+        return true;
+      }
+    }
+    return false;
+  }, [obstacles, playerY]);
 
   // Игровая логика
   const jump = useCallback(() => {
@@ -22,7 +54,6 @@ const RunnerGame = () => {
       setPlayerY(20);
       
       if (soundEnabled) {
-        // Звук прыжка (имитация через console для демонстрации)
         console.log('🦘 ПРЫЖОК!');
       }
       
@@ -38,13 +69,27 @@ const RunnerGame = () => {
       setSpeed(prev => Math.min(prev + 0.5, 5));
       
       if (soundEnabled) {
-        // Звук ускорения
         console.log('💨 ПУУУУК! УСКОРЕНИЕ!');
       }
       
       setTimeout(() => setSpeed(prev => Math.max(prev - 0.3, 1)), 1000);
     }
   }, [gameState, soundEnabled]);
+
+  // Генерация препятствий
+  const generateObstacle = useCallback(() => {
+    const types: ('rock' | 'spike' | 'bird')[] = ['rock', 'spike', 'bird'];
+    const randomType = types[Math.floor(Math.random() * types.length)];
+    const newObstacle: Obstacle = {
+      id: obstacleIdCounter,
+      x: 800,
+      type: randomType,
+      height: randomType === 'bird' ? 40 : randomType === 'spike' ? 60 : 50
+    };
+    
+    setObstacles(prev => [...prev, newObstacle]);
+    setObstacleIdCounter(prev => prev + 1);
+  }, [obstacleIdCounter]);
 
   // Управление клавишами
   useEffect(() => {
@@ -68,18 +113,46 @@ const RunnerGame = () => {
   // Игровой цикл
   useEffect(() => {
     if (gameState === 'playing') {
-      const interval = setInterval(() => {
+      const gameLoop = setInterval(() => {
+        // Обновление счета
         setScore(prev => prev + Math.floor(speed));
-      }, 100);
+        
+        // Движение препятствий
+        setObstacles(prev => 
+          prev
+            .map(obs => ({ ...obs, x: obs.x - (3 + speed) }))
+            .filter(obs => obs.x > -50)
+        );
+        
+        // Проверка коллизий
+        if (checkCollision()) {
+          setGameState('gameOver');
+          if (soundEnabled) {
+            console.log('💥 БУМ! ИГРА ОКОНЧЕНА!');
+          }
+        }
+      }, 50);
       
-      return () => clearInterval(interval);
+      // Генерация новых препятствий
+      const obstacleGenerator = setInterval(() => {
+        if (Math.random() < 0.3 + (speed * 0.1)) {
+          generateObstacle();
+        }
+      }, 1000);
+      
+      return () => {
+        clearInterval(gameLoop);
+        clearInterval(obstacleGenerator);
+      };
     }
-  }, [gameState, speed]);
+  }, [gameState, speed, checkCollision, generateObstacle, soundEnabled]);
 
   const startGame = () => {
     setGameState('playing');
     setScore(0);
     setSpeed(1);
+    setObstacles([]);
+    setObstacleIdCounter(0);
   };
 
   const pauseGame = () => {
@@ -92,6 +165,16 @@ const RunnerGame = () => {
       localStorage.setItem('runnerHighScore', score.toString());
     }
     setGameState('menu');
+    setObstacles([]);
+  };
+
+  const getObstacleEmoji = (type: string) => {
+    switch (type) {
+      case 'rock': return '🪨';
+      case 'spike': return '⚡';
+      case 'bird': return '🦅';
+      default: return '🪨';
+    }
   };
 
   return (
@@ -125,7 +208,7 @@ const RunnerGame = () => {
                   
                   {/* Персонаж */}
                   <div 
-                    className="absolute left-20 transition-all duration-300 ease-out text-6xl"
+                    className="absolute left-20 transition-all duration-300 ease-out text-6xl z-10"
                     style={{ 
                       bottom: `${playerY}px`,
                       transform: isJumping ? 'rotate(-15deg)' : 'rotate(0deg)'
@@ -133,6 +216,21 @@ const RunnerGame = () => {
                   >
                     🏃‍♂️
                   </div>
+
+                  {/* Препятствия */}
+                  {obstacles.map((obstacle) => (
+                    <div
+                      key={obstacle.id}
+                      className="absolute text-4xl z-5"
+                      style={{
+                        left: `${obstacle.x}px`,
+                        bottom: obstacle.type === 'bird' ? '80px' : '0px',
+                        transform: obstacle.type === 'bird' ? 'translateY(-10px)' : 'none'
+                      }}
+                    >
+                      {getObstacleEmoji(obstacle.type)}
+                    </div>
+                  ))}
 
                   {/* Эффект скорости */}
                   {speed > 1 && (
@@ -150,6 +248,27 @@ const RunnerGame = () => {
                       <Button onClick={startGame} size="lg" className="bg-orange-500 hover:bg-orange-600 text-white font-bold">
                         ПОЕХАЛИ! 🚀
                       </Button>
+                    </Card>
+                  </div>
+                )}
+
+                {/* Game Over */}
+                {gameState === 'gameOver' && (
+                  <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
+                    <Card className="p-8 text-center bg-white/95 backdrop-blur-sm">
+                      <CardTitle className="text-4xl mb-2 text-red-600">💥 ИГРА ОКОНЧЕНА!</CardTitle>
+                      <p className="text-xl mb-4">Очки: <strong>{score}</strong></p>
+                      {score > highScore && (
+                        <p className="text-lg text-green-600 mb-4">🎉 Новый рекорд!</p>
+                      )}
+                      <div className="flex gap-4 justify-center">
+                        <Button onClick={startGame} size="lg" className="bg-green-500 hover:bg-green-600 text-white">
+                          🔄 Заново
+                        </Button>
+                        <Button onClick={endGame} size="lg" variant="outline">
+                          📋 В меню
+                        </Button>
+                      </div>
                     </Card>
                   </div>
                 )}
